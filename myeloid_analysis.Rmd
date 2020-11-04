@@ -1,0 +1,37 @@
+---
+title: "Analysing Myeloid Cells"
+author: "Sarah Ennis"
+date: "11/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## This document contains code to reproduce the analysis of myeloid cells for my poster at Emerging Technologies in Single-Cell Research 2020
+
+```{r}
+# load libraries
+library(ggplot2)
+library(dplyr)
+library(PNWColors)
+library(ggcute)
+library(cowplot)
+library(patchwork)
+library(ggtext)
+library(stringr)
+library(tidyr)
+library(ComplexHeatmap)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ggrepel)
+library(Seurat)
+library(SingleCellExperiment)
+library(edgeR)
+
+# Read in data
+data <- readRDS('myeloid_cells.Rds')
+
+```
+
