@@ -9,29 +9,336 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## This document contains code to reproduce the analysis of myeloid cells for my poster at Emerging Technologies in Single-Cell Research 2020
+## This document contains code to reproduce all figures from my poster analysing myeloid cells at Emerging Technologies in Single-Cell Research 2020
 
-```{r}
+```{r warning=FALSE, message=FALSE}
 # load libraries
-library(ggplot2)
-library(dplyr)
-library(PNWColors)
-library(ggcute)
-library(cowplot)
-library(patchwork)
-library(ggtext)
-library(stringr)
-library(tidyr)
-library(ComplexHeatmap)
-library(clusterProfiler)
-library(org.Hs.eg.db)
-library(ggrepel)
 library(Seurat)
 library(SingleCellExperiment)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(PNWColors)
+library(patchwork)
+library(ggtext)
+library(viridis)
+library(ggrepel)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ComplexHeatmap)
+library(simplifyEnrichment)
 library(edgeR)
+```
 
+```{r}
 # Read in data
-data <- readRDS('myeloid_cells.Rds')
+data <- readRDS('myeloid_cells.rds')
+data
+colnames(data@meta.data)
+```
+
+```{r}
+# Fig A - umap colored by timepoint
+df <- data.frame(timepoint = data$timepoint, patient = data$patient, Embeddings(data, reduction = 'umap')[,1:2])
+df$timepoint <- factor(df$timepoint, levels = c('d0', 'TRT', 'R'))
+
+ggplot(df, aes(x = umap_1, y = umap_2, col = timepoint)) +
+  geom_point(size = 0.8, show.legend = F) +
+  geom_label_repel(data = df %>% group_by(timepoint) %>%
+                     dplyr::summarise(x = median(umap_1),
+                                      y = median(umap_2)),
+                   aes(x = x, y = y, label = c('Diagnosis', 'Treatment', 'Relapse')), 
+                   show.legend = F, 
+                   label.size = NA, label.padding = unit(0.1, "lines"),
+                   segment.alpha = 0, 
+                   fontface = 'bold', 
+                   fill = alpha(c("white"),0.9), 
+                   size = 12) +
+  scale_color_manual(values = pnw_palette('Bay', 3)) +
+  labs(title = NULL, col = NULL) +
+  guides(col = guide_legend(override.aes = list(size = 4))) +
+  theme_void(base_size = 20) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# Fig B - barplot with number of cells by patient/timepoint
+pat <- ggplot(df, aes(x= 1, fill = as.factor(patient))) +
+  geom_bar(col = 'white', width = 0.4) +
+  scale_fill_manual(values = pnw_palette('Sunset2', 4), name = NULL, labels = paste('Patient', 1:4)) +
+  scale_y_continuous(expand = c(0,0), breaks = c(seq(0, 9000, 3000), nrow(df)), name = '# of cells', labels = function(x) prettyNum(x, big.mark = ',')) +
+  scale_x_discrete(expand = c(0,0), name = NULL) +
+  theme_void(base_size = 28) +
+  theme(axis.text = element_text(color = 'black', size = 22, hjust = 1),
+        axis.line = element_blank(),
+        axis.title.y = element_text(angle = 90, size = 25),
+        axis.ticks.y = element_line(color = 'black', size = 0.5),
+        axis.ticks.length.y = unit(0.2, 'line'),
+        plot.margin = margin(t = 10, b = 10)) 
+
+tim <- ggplot(df, aes(x= 1, fill = as.factor(timepoint)))+
+  geom_bar(col = 'white', width = 0.4) +
+  scale_fill_manual(values = pnw_palette('Bay', 3), name = NULL, labels = c('Diagnosis', 'Treatment', 'Relapse')) +
+  scale_y_continuous(expand = c(0,0), name = NULL, labels = function(x) prettyNum(x, big.mark = ',')) +
+  scale_x_discrete(expand = c(0,0), name = NULL) +
+  theme_void(base_size = 28) +
+  theme(axis.text = element_text(color = 'black'),
+        axis.line = element_blank(), 
+        axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank())
+
+pat + tim + plot_layout(guides = 'collect')
+```
+
+```{r}
+# Fig C - heatmap of DEGs for timepoints
+
+# identifying DEGs
+Idents(data) <- data$timepoint
+degs <- FindAllMarkers(data, test.use = 'LR', latent.vars = 'patient')
+
+top_up <- degs %>% filter(p_val_adj <= 0.05) %>% filter(avg_logFC > 0) %>% group_by(cluster) %>% top_n(10, wt = -p_val_adj) %>% top_n(10, wt = avg_logFC)
+top_up$cluster <- factor(top_up$cluster, levels = c('d0', 'TRT', 'R'))
+top_up <- top_up[order(top_up$cluster), ]
+
+genes <- as.character(unique(top_up$gene))
+
+# extract values for making heatmap
+mat <- data[genes, ]@assays$RNA@data
+mat <- t(scale(t(mat)))
+
+cluster_anno <- data@meta.data$timepoint
+cluster_anno <- factor(cluster_anno, levels = c('d0', 'TRT', 'R'))
+quantile(mat, c(0.1, 0.95))
+col_fun = circlize::colorRamp2(c(-1, 0, 1, 2), c("#180F3E", "#000004", "#CD4071",  "#FEC98D"))
+
+Heatmap(mat,  
+        column_split = factor(cluster_anno, levels = c('d0', 'TRT', 'R'), labels = c('Diagnosis', 'Treatment', 'Relapse')),
+        cluster_columns = F,
+        row_split = factor(rep(1:3, each = 10)),
+        row_gap = unit(0.5, "mm"),
+        row_title_gp = gpar(fontsize = 0),
+        show_column_dend = FALSE,
+        cluster_column_slices = TRUE,
+        column_title_gp = gpar(fontsize = 0),
+        column_gap = unit(0.5, "mm"),
+        row_order = genes,
+        cluster_rows = FALSE,
+        show_row_dend = FALSE,
+        col = col_fun,
+        row_names_gp = gpar(fontsize = 4),
+        column_title_rot = 0,
+        heatmap_legend_param = list(title = "Scaled \nexpression", title_gp = gpar(fontface = 'plain', fontsize = 10)),
+        top_annotation = HeatmapAnnotation(foo = anno_block(labels = c("Diagnosis", "Treatment", "Relapse"), labels_gp = gpar(fontsize = 10), gp = gpar(fill = pnw_palette('Bay', 3)))),
+        left_annotation = rowAnnotation(text = anno_text(rownames(mat), location = unit(1, "npc"), rot = 0, just = "right", gp = gpar(fontsize = 7))),
+        show_column_names = FALSE,
+        use_raster = TRUE,
+        show_row_names = FALSE,
+        raster_quality = 4)
+```
+
+
+```{r}
+# Fig D - GO terms for upregulated timepoint genes
+
+all_genes <- names(rowSums(data)[rowSums(data) > 0])
+sig_markers <- degs %>% filter(p_val_adj <= 0.05, avg_logFC > 0)
+
+d0_genes <- subset(sig_markers, sig_markers$cluster == 'd0')$gene
+TRT_genes <- subset(sig_markers, sig_markers$cluster == 'TRT')$gene
+R_genes <- subset(sig_markers, sig_markers$cluster == 'R')$gene
+
+all_degs <- list('d0' = d0_genes, 'TRT' = TRT_genes, 'R' = R_genes)
+compar <- compareCluster(all_degs, fun = 'enrichGO', universe = all_genes, OrgDb = org.Hs.eg.db, keyType = 'SYMBOL', ont = "BP")
+
+emapplot(compar, showCategory = 10, layout = 'kk') + 
+  scale_fill_manual(values = pnw_palette('Bay', 3), labels = c('Diagnosis', 'Treatment', 'Relapse'), name = NULL) +
+  theme(legend.text = element_text(size = 12)) +
+  coord_cartesian(clip = 'off')
+```
+
+```{r}
+# Fig E - umap colored by cluster
+df <- data.frame(timepoint = data$timepoint, patient = data$patient, cluster = data$cluster, Embeddings(data, reduction = 'umap')[,1:2])
+
+cluster_cols <- c("#FCABCC", "#E4DD68", "#7EBBAC", "#ED4030", "#797CD9", "#FE9134", "#96CBFE")
+
+ggplot(df, aes(x = umap_1, y = umap_2, col = paste('Cluster', cluster))) +
+  geom_point(size = 0.8, show.legend = F) +
+  geom_label(data = df %>% group_by(cluster) %>%
+               dplyr::summarise(x = median(umap_1),
+                                y = median(umap_2)),
+             aes(x = x, y = y, col = NULL, label = as.character(seq(0,6))),
+             show.legend = F,
+             label.size = NA, 
+             label.padding = unit(0.1, "lines"),
+             fill = alpha(c("white"),0.8), 
+             size = 12, 
+             fontface = 'bold') +
+  scale_color_manual(values = cluster_cols) +
+  labs(title = NULL, col = NULL) +
+  guides(col = guide_legend(override.aes = list(size = 4))) +
+  theme_void(base_size = 20) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# Fig F - clusters by patient/timepoint
+timepoint.labs <- c("Diagnosis", "Treatment", "Relapse")
+names(timepoint.labs) <- c("d0", "TRT", "R")
+pat.labs <- c("Patient 1", "Patient 2", "Patient 3", "Patient 4")
+names(pat.labs) <- c("Patient1", "Patient2", "Patient3", "Patient4")
+df$timepoint <- factor(df$timepoint, levels = c('d0', 'TRT', 'R'))
+
+ggplot(df, aes(x = umap_1, y = umap_2, col = paste('Cluster', cluster))) +
+  geom_point(size = 0.5, show.legend = F) +
+  scale_color_manual(values = cluster_cols) +
+  labs(col = NULL, x = NULL, y = NULL) +
+  guides(col = guide_legend(override.aes = list(size = 4))) +
+  facet_grid(timepoint ~ patient, switch = 'y', labeller = labeller(timepoint = timepoint.labs, patient = pat.labs)) +
+  theme_classic(base_size = 15) +
+  theme(axis.text = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        legend.key.size = unit(2, 'line'),
+        strip.text = element_text(size = 15))
+
+```
+
+```{r}
+# Fig G - DA of clusters across timepoints
+
+# for DA analysis I followed this tutorial: https://osca.bioconductor.org/multi-sample-comparisons.html#performing-the-da-analysis
+data <- as.SingleCellExperiment(data, assay = 'RNA')
+data$d0 <- data$timepoint == 'd0'
+data$TRT <- data$timepoint == 'TRT'
+data$R <- data$timepoint == 'R'
+data$sample <- paste0(data$patient, data$timepoint)
+abundances <- table(data$cluster, data$sample)
+abundances <- unclass(abundances) 
+# Attaching some column metadata.
+extra.info <- colData(data)[match(colnames(abundances), data$sample),]
+y.ab <- DGEList(abundances, samples=extra.info)
+
+# diagnosis vs rest
+design <- model.matrix(~factor(patient) + factor(d0), y.ab$samples)
+y.ab <- estimateDisp(y.ab, design, trend="none")
+fit.ab <- glmQLFit(y.ab, design, robust=TRUE, abundance.trend=FALSE)
+res <- glmQLFTest(fit.ab, coef=ncol(design))
+d0_res <- topTags(res)$table
+
+# TRT vs rest
+design <- model.matrix(~factor(patient) + factor(TRT), y.ab$samples)
+y.ab <- estimateDisp(y.ab, design, trend="none")
+fit.ab <- glmQLFit(y.ab, design, robust=TRUE, abundance.trend=FALSE)
+res <- glmQLFTest(fit.ab, coef=ncol(design))
+TRT_res <- topTags(res)$table
+
+# R vs rest
+design <- model.matrix(~factor(patient) + factor(R), y.ab$samples)
+y.ab <- estimateDisp(y.ab, design, trend="none")
+fit.ab <- glmQLFit(y.ab, design, robust=TRUE, abundance.trend=FALSE)
+res <- glmQLFTest(fit.ab, coef=ncol(design))
+R_res <- topTags(res)$table
+
+
+## plot results
+d0_res$cluster <- as.factor(rownames(d0_res))
+d0_res$sig <- as.factor(abs(d0_res$logFC) >= 1 & d0_res$FDR <= 0.05)
+TRT_res$cluster <- as.factor(rownames(TRT_res))
+TRT_res$sig <- as.factor(abs(TRT_res$logFC) >= 1 & TRT_res$FDR <= 0.05)
+R_res$cluster <- as.factor(rownames(R_res))
+R_res$sig <- as.factor(abs(R_res$logFC) >= 1 & R_res$FDR <= 0.05)
+d0_res$timepoint <- 'd0'
+R_res$timepoint <- 'R'
+TRT_res$timepoint <- 'TRT'
+res_df <- rbind(d0_res, R_res, TRT_res)
+res_df$timepoint <- factor(res_df$timepoint, levels = c('d0', 'TRT', 'R'))
+
+
+ggplot(res_df, aes(x = logFC, y = as.factor(cluster), col = as.factor(cluster), shape = FDR <= 0.05, size = -log10(FDR))) +
+  geom_linerange(aes(xmin = 0, xmax = logFC, y = as.factor(cluster),  color = as.factor(cluster)), inherit.aes = F, show.legend = F, size = 0.4) +
+  geom_point(aes(x = logFC, y = as.factor(cluster), shape = NULL, col = NULL), col = 'white') +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 2, size = 0.5, color = 'gray10') +
+  scale_y_discrete(limits = factor(seq(6, 0, -1))) +
+  scale_color_manual(values = c(cluster_cols)) +
+  scale_x_continuous(position = 'top') +
+  scale_shape_manual(values = c(1, 19), breaks = c(FALSE), labels = c('> 0.05')) +
+  scale_size_area(breaks = c(-log10(0.01), -log10(0.0001), -log10(0.000001)), labels = c(expression(~'10'^-2), expression(~'10'^-4), expression(~'10'^-6))) +
+  labs(y = NULL, shape = '\n\nAdj. p val', color = 'Cluster', size = NULL, x = 'logFC in abundance') +
+  guides(color = guide_legend(order = 1, override.aes = list(size = 4)), size = guide_legend(order = 3, keyheight = unit(1.5, 'line'), title.position = NULL), shape = guide_legend(order = 2, override.aes = list(size = 3))) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.y = element_blank(),
+        axis.text.x.top = element_text(color = 'black'),
+        strip.text.y = element_textbox(size = 15),
+        strip.background.y = element_rect(color = 'black', size = 1.2), 
+        legend.margin = margin(t = -20),
+        legend.text = element_text(hjust = 0, size = 14)) +
+  facet_grid(timepoint ~ .,  switch = 'y', labeller = labeller(timepoint = timepoint.labs)) +
+  coord_cartesian(clip = 'off') 
+```
+
+```{r}
+# Fig H - dotplot of degs for clusters
+data <- as.Seurat(data, assay = 'RNA')
+Idents(data) <- data$cluster
+markers <- FindAllMarkers(data, test.use = 'LR', latent.vars = 'patient')
+
+top_markers <- markers %>% filter(p_val_adj <= 0.05) %>% filter(avg_logFC > 0) %>% group_by(cluster) %>% top_n(10, wt = -p_val_adj) %>% top_n(10, wt = avg_logFC) %>% ungroup() %>% mutate(cluster = as.numeric(as.character(cluster))) %>% arrange(cluster) %>% pull(gene)
+
+data$cluster <- factor(data$cluster, levels = as.character(seq(0,6,1)))
+x_labs <- paste0("<span style='color:", cluster_cols, "'>", levels(data$cluster), "</span>")
+names(x_labs) <- levels(data$cluster)
+DotPlot(data, features = unique(top_markers)) + 
+  scale_y_discrete(limits = factor(seq(6,0,-1)), name = NULL, labels = x_labs) +
+  scale_x_discrete(limits = unique(top_markers), position = 'top', name = NULL) +
+  scale_color_viridis(option = 'A', limits = c(-1.5, 2.5)) +
+  scale_size_area(max_size = 4) +
+  guides(color = guide_colorbar(title = 'Avg.\nexpression'), size = guide_legend(title = 'Percent\nexpressed')) +
+  theme_minimal() +
+  theme(axis.text.x.top = element_text(angle = 90, hjust = 0, vjust = 0.5, color = 'black'),
+        axis.text.y = element_markdown(size = 12, face = 'bold'),
+        legend.box.margin = margin(t = -50,  b = 10),
+        legend.margin = margin(b = 0)) +
+  coord_cartesian(clip = 'off')
+
+```
+
+```{r}
+# Need development version of ComplexHeatmap for this
+
+# Fig I - most frequent words in GO terms for clusters
+sig_markers <- markers %>% filter(p_val_adj <= 0.05, avg_logFC > 0)
+
+go_df <- data.frame()
+for(i in unique(sig_markers$cluster)){
+  geneset_oi <- sig_markers %>% filter(cluster == i) %>% pull(gene)
+  go <- enrichGO(gene = geneset_oi, universe = all_genes, OrgDb = org.Hs.eg.db, keyType = 'SYMBOL', ont = "BP")
+  go <- as.data.frame(go) %>% mutate(cluster = i)
+  go_df <- rbind(go_df, go)
+}
+
+
+
+wc_df <- data.frame()
+for(i in unique(go_df$cluster)){
+  sub <- go_df %>% filter(cluster == i) %>% top_n(30, wt = -p.adjust)
+  wc <- simplifyEnrichment::count_word(sub$ID, exclude_words = c('regulation', 'cell', 'activation', 'response', 'positive'))
+  wc$cluster <- i
+  wc_df <- rbind(wc_df, wc)
+}
+
+plot_df <- wc_df %>% group_by(cluster) %>% top_n(6, wt = freq) %>% mutate(rank = rank(dplyr::desc(freq)))
+ggplot(plot_df, aes(x = 0, y = 0, size = rank, label = word, col = cluster)) +
+  geom_label_repel(position = position_jitter(seed = 3, width = 0.02),  fontface = 'bold', segment.alpha = 0, show.legend = F, label.size = NA, fill = alpha(c("white"),0)) +
+  scale_color_manual(values = cluster_cols) +
+  scale_size_area(max_size = 4) +
+  facet_grid(cluster~.) +
+  theme_void() +
+  theme(strip.text.y = element_blank()) +
+  coord_cartesian(clip = 'off')
 
 ```
 
