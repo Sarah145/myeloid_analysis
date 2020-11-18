@@ -1,7 +1,6 @@
 ---
 title: "Analysing Myeloid Cells"
 author: "Sarah Ennis"
-date: "11/4/2020"
 output: html_document
 ---
 
@@ -9,7 +8,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## This document contains code to reproduce all figures from my poster analysing myeloid cells at Emerging Technologies in Single-Cell Research 2020
+This document contains code to reproduce all figures from my poster analysing myeloid cells at Emerging Technologies in Single-Cell Research 2020.
 
 ```{r warning=FALSE, message=FALSE}
 # load libraries
